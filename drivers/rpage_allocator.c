@@ -191,6 +191,7 @@ int alloc_remote_block(u32 free_list_idx) {
     bi->raddr = raddr_;
     bi->rkey = rkey_;
     bi->cnt = rblock_size >> PAGE_SHIFT;
+    bi->list_id = free_list_idx;
     spin_lock_init(&(bi->block_lock));
     bitmap_zero(bi->rpages_bitmap, rblock_size >> PAGE_SHIFT);
     INIT_LIST_HEAD(&bi->block_node_list);
@@ -272,8 +273,21 @@ void free_remote_page(u64 raddr) {
     BUG_ON(raddr_block != bi->raddr);
     BUG_ON(raddr < bi->raddr);
 
-    spin_lock(free_blocks_list_locks + nproc);
+    
     spin_lock(&bi->block_lock);
+
+    if(bi->list_id == nprocs) { // full block; not in a free list
+        clear_bit(offset, bi->rpages_bitmap);
+        spin_lock(free_blocks_list_locks + nproc);
+        list_add(&bi->block_node_list, free_blocks_lists + nproc);
+        bi->list_id == nproc;
+        spin_unlock(free_blocks_list_locks + nproc);
+    } else {    //not-full block; in a free list
+        spin_lock(free_blocks_list_locks + bi->list_id);
+
+    }
+
+    spin_lock(free_blocks_list_locks + free_list_idx);
 
     offset = (raddr - bi->raddr) >> PAGE_SHIFT;
     BUG_ON(offset >= (rblock_size >> PAGE_SHIFT));
@@ -284,10 +298,10 @@ void free_remote_page(u64 raddr) {
         bi->cnt += 1;
         if(bi->cnt == (rblock_size >> PAGE_SHIFT)) {
             free_remote_block(bi);
-            spin_unlock(free_blocks_list_locks + nproc);
+            spin_unlock(free_blocks_list_locks + free_list_idx);
             return; // no need to release block's lock
         } else if(bi->cnt == 1) {
-            list_add(&bi->block_node_list, free_blocks_lists + nproc);
+            list_add(&bi->block_node_list, free_blocks_lists + free_list_idx);
         }
     }
     else {
@@ -297,7 +311,7 @@ void free_remote_page(u64 raddr) {
     }
 
     spin_unlock(&bi->block_lock);
-    spin_unlock(free_blocks_list_locks + nproc);
+    spin_unlock(free_blocks_list_locks + free_list_idx);
 }
 EXPORT_SYMBOL(free_remote_page);
 
